@@ -1,1 +1,340 @@
-<h1>Github pages test</h1>
+<?php
+// 1. CONFIGURACIÓN INICIAL
+session_start();
+error_reporting(0); // Ocultar errores en producción
+
+// Configuración de la base de datos
+define('DB_HOST', 'localhost');
+define('DB_USER', 'usuario_seguro');
+define('DB_PASS', 'contraseña_compleja_123!');
+define('DB_NAME', 'intranet_empresa');
+
+// Conexión a la base de datos
+$db = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+if ($db->connect_error) {
+    die("Error de conexión: " . $db->connect_error);
+}
+
+// 2. FUNCIONES DE SEGURIDAD
+function limpiarInput($data) {
+    return htmlspecialchars(stripslashes(trim($data)));
+}
+
+function redirigir($url) {
+    header("Location: $url");
+    exit();
+}
+
+// 3. AUTENTICACIÓN DE USUARIOS
+if (isset($_POST['accion'])) {
+    // Registro de nuevo usuario
+    if ($_POST['accion'] == 'registro') {
+        $usuario = limpiarInput($_POST['usuario']);
+        $contrasena = password_hash(limpiarInput($_POST['contrasena']), PASSWORD_BCRYPT);
+        
+        $stmt = $db->prepare("INSERT INTO usuarios (usuario, contrasena) VALUES (?, ?)");
+        $stmt->bind_param("ss", $usuario, $contrasena);
+        
+        if ($stmt->execute()) {
+            $_SESSION['mensaje'] = "Usuario registrado correctamente";
+            redirigir("login.php");
+        } else {
+            $_SESSION['error'] = "Error al registrar usuario";
+        }
+    }
+    
+    // Inicio de sesión
+    if ($_POST['accion'] == 'login') {
+        $usuario = limpiarInput($_POST['usuario']);
+        $contrasena = limpiarInput($_POST['contrasena']);
+        
+        $stmt = $db->prepare("SELECT id, contrasena FROM usuarios WHERE usuario = ?");
+        $stmt->bind_param("s", $usuario);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        
+        if ($result->num_rows == 1) {
+            $user = $result->fetch_assoc();
+            if (password_verify($contrasena, $user['contrasena'])) {
+                $_SESSION['usuario_id'] = $user['id'];
+                $_SESSION['usuario'] = $usuario;
+                redirigir("index.php");
+            }
+        }
+        
+        $_SESSION['error'] = "Usuario o contraseña incorrectos";
+        redirigir("login.php");
+    }
+    
+    // Cerrar sesión
+    if ($_POST['accion'] == 'logout') {
+        session_destroy();
+        redirigir("login.php");
+    }
+}
+
+// 4. GESTIÓN DE DOCUMENTOS
+if (isset($_FILES['documento']) && isset($_SESSION['usuario_id'])) {
+    $targetDir = "uploads/";
+    if (!file_exists($targetDir)) {
+        mkdir($targetDir, 0755, true);
+    }
+    
+    // Crear .htaccess para proteger la carpeta
+    if (!file_exists($targetDir.".htaccess")) {
+        file_put_contents($targetDir.".htaccess", 
+            "Order Deny,Allow\nDeny from all\n<FilesMatch '\.(pdf|docx?|xlsx?|pptx?)$'>\nAllow from all\n</FilesMatch>");
+    }
+    
+    $fileName = basename($_FILES["documento"]["name"]);
+    $targetFile = $targetDir . $fileName;
+    $fileType = strtolower(pathinfo($targetFile, PATHINFO_EXTENSION));
+    
+    // Validar tipo de archivo
+    $allowedTypes = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'];
+    if (in_array($fileType, $allowedTypes)) {
+        if (move_uploaded_file($_FILES["documento"]["tmp_name"], $targetFile)) {
+            $stmt = $db->prepare("INSERT INTO documentos (nombre, ruta, usuario_id) VALUES (?, ?, ?)");
+            $stmt->bind_param("ssi", $fileName, $targetFile, $_SESSION['usuario_id']);
+            $stmt->execute();
+            $_SESSION['mensaje'] = "Documento subido correctamente";
+        } else {
+            $_SESSION['error'] = "Error al subir el documento";
+        }
+    } else {
+        $_SESSION['error'] = "Tipo de archivo no permitido";
+    }
+    redirigir("documentos.php");
+}
+
+// 5. INTERFAZ DE USUARIO
+if (!isset($_GET['pagina']) || $_GET['pagina'] == 'login' || !isset($_SESSION['usuario_id'])) {
+    // Página de Login
+    ?>
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Intranet - Login</title>
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #f4f4f9; }
+            .container { max-width: 400px; margin: 50px auto; padding: 20px; background: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+            input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; }
+            button { background: #5cb85c; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
+            .error { color: red; }
+            .mensaje { color: green; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h2>Iniciar Sesión</h2>
+            <?php if (isset($_SESSION['error'])): ?>
+                <p class="error"><?= $_SESSION['error']; unset($_SESSION['error']); ?></p>
+            <?php endif; ?>
+            <?php if (isset($_SESSION['mensaje'])): ?>
+                <p class="mensaje"><?= $_SESSION['mensaje']; unset($_SESSION['mensaje']); ?></p>
+            <?php endif; ?>
+            <form method="post">
+                <input type="hidden" name="accion" value="login">
+                <input type="text" name="usuario" placeholder="Usuario" required>
+                <input type="password" name="contrasena" placeholder="Contraseña" required>
+                <button type="submit">Ingresar</button>
+            </form>
+            <p>¿No tienes cuenta? <a href="registro.php">Regístrate</a></p>
+        </div>
+    </body>
+    </html>
+    <?php
+    exit();
+}
+
+// 6. PÁGINAS PRINCIPALES
+$pagina = isset($_GET['pagina']) ? $_GET['pagina'] : 'inicio';
+
+switch ($pagina) {
+    case 'inicio':
+        ?>
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <title>Intranet - Inicio</title>
+            <style>
+                /* Estilos para la intranet */
+                body { font-family: Arial, sans-serif; margin: 0; }
+                header { background: #2c3e50; color: white; padding: 10px 20px; }
+                nav { background: #34495e; }
+                nav ul { list-style: none; padding: 0; margin: 0; display: flex; }
+                nav li a { color: white; padding: 15px 20px; display: block; text-decoration: none; }
+                nav li a:hover { background: #1abc9c; }
+                .contenido { padding: 20px; }
+                .tab-content { display: none; }
+                .tab-content.active { display: block; }
+                .documentos { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
+                .documento { background: white; padding: 15px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+            </style>
+        </head>
+        <body>
+            <header>
+                <h1>Intranet Corporativa</h1>
+                <form method="post" style="float: right;">
+                    <input type="hidden" name="accion" value="logout">
+                    <button type="submit">Cerrar Sesión</button>
+                </form>
+                <p>Bienvenido, <?= $_SESSION['usuario']; ?></p>
+            </header>
+            
+            <nav>
+                <ul>
+                    <li><a href="?pagina=inicio">Inicio</a></li>
+                    <li><a href="?pagina=calidad">Gestión de Calidad</a></li>
+                    <li><a href="?pagina=documentos">Documentos</a></li>
+                    <li><a href="?pagina=manuales">Manuales</a></li>
+                </ul>
+            </nav>
+            
+            <div class="contenido">
+                <div id="inicio" class="tab-content active">
+                    <h2>Bienvenido al Sistema de Intranet</h2>
+                    <p>Este es el portal interno de la empresa.</p>
+                </div>
+                
+                <div id="calidad" class="tab-content">
+                    <h2>Sistema de Gestión de Calidad</h2>
+                    <div class="documentos">
+                        <div class="documento">Documentos ISO 9001</div>
+                        <div class="documento">Procedimientos</div>
+                        <div class="documento">Registros</div>
+                        <div class="documento">Auditorías</div>
+                    </div>
+                </div>
+                
+                <div id="documentos" class="tab-content">
+                    <h2>Documentos</h2>
+                    <form method="post" enctype="multipart/form-data">
+                        <input type="file" name="documento" required>
+                        <button type="submit">Subir Documento</button>
+                    </form>
+                    
+                    <div class="documentos">
+                        <?php
+                        $result = $db->query("SELECT * FROM documentos WHERE usuario_id = {$_SESSION['usuario_id']}");
+                        while ($doc = $result->fetch_assoc()):
+                        ?>
+                            <div class="documento">
+                                <h3><?= $doc['nombre']; ?></h3>
+                                <a href="descargar.php?id=<?= $doc['id']; ?>">Descargar</a>
+                            </div>
+                        <?php endwhile; ?>
+                    </div>
+                </div>
+                
+                <div id="manuales" class="tab-content">
+                    <h2>Manuales</h2>
+                    <div class="documentos">
+                        <div class="documento">
+                            <h3>Manual de Usuario</h3>
+                            <a href="#">Descargar</a>
+                        </div>
+                        <div class="documento">
+                            <h3>Manual de Procedimientos</h3>
+                            <a href="#">Descargar</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <script>
+                // Cambio entre pestañas
+                document.querySelectorAll('nav a').forEach(link => {
+                    link.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        document.querySelectorAll('.tab-content').forEach(tab => {
+                            tab.classList.remove('active');
+                        });
+                        document.getElementById(this.getAttribute('href').split('=')[1]).classList.add('active');
+                        history.pushState(null, null, this.getAttribute('href'));
+                    });
+                });
+            </script>
+        </body>
+        </html>
+        <?php
+        break;
+        
+    case 'registro':
+        ?>
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <title>Registro de Usuario</title>
+            <style>
+                body { font-family: Arial, sans-serif; background-color: #f4f4f9; }
+                .container { max-width: 400px; margin: 50px auto; padding: 20px; background: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+                input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; }
+                button { background: #5cb85c; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>Registro de Usuario</h2>
+                <form method="post">
+                    <input type="hidden" name="accion" value="registro">
+                    <input type="text" name="usuario" placeholder="Usuario" required>
+                    <input type="password" name="contrasena" placeholder="Contraseña" required>
+                    <button type="submit">Registrarse</button>
+                </form>
+                <p>¿Ya tienes cuenta? <a href="login.php">Inicia sesión</a></p>
+            </div>
+        </body>
+        </html>
+        <?php
+        break;
+}
+
+// 7. ARCHIVO PARA DESCARGAR DOCUMENTOS
+if (isset($_GET['id']) && $_GET['id'] == 'descargar') {
+    $id = intval($_GET['id']);
+    $stmt = $db->prepare("SELECT nombre, ruta FROM documentos WHERE id = ? AND usuario_id = ?");
+    $stmt->bind_param("ii", $id, $_SESSION['usuario_id']);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    if ($result->num_rows == 1) {
+        $doc = $result->fetch_assoc();
+        if (file_exists($doc['ruta'])) {
+            header('Content-Description: File Transfer');
+            header('Content-Type: application/octet-stream');
+            header('Content-Disposition: attachment; filename="'.basename($doc['ruta']).'"');
+            header('Expires: 0');
+            header('Cache-Control: must-revalidate');
+            header('Pragma: public');
+            header('Content-Length: ' . filesize($doc['ruta']));
+            readfile($doc['ruta']);
+            exit;
+        }
+    }
+    
+    $_SESSION['error'] = "Documento no encontrado o no tienes permiso";
+    redirigir("documentos.php");
+}
+
+// 8. CREACIÓN DE TABLAS SI NO EXISTEN (solo ejecutar una vez)
+$db->query("CREATE TABLE IF NOT EXISTS usuarios (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    usuario VARCHAR(50) NOT NULL UNIQUE,
+    contrasena VARCHAR(255) NOT NULL,
+    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+$db->query("CREATE TABLE IF NOT EXISTS documentos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    ruta VARCHAR(255) NOT NULL,
+    usuario_id INT NOT NULL,
+    fecha_subida TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+)");
+?>
