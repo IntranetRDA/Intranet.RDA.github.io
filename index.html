@@ -1,340 +1,311 @@
-<?php
-// 1. CONFIGURACIÓN INICIAL
-session_start();
-error_reporting(0); // Ocultar errores en producción
-
-// Configuración de la base de datos
-define('DB_HOST', 'localhost');
-define('DB_USER', 'usuario_seguro');
-define('DB_PASS', 'contraseña_compleja_123!');
-define('DB_NAME', 'intranet_empresa');
-
-// Conexión a la base de datos
-$db = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
-if ($db->connect_error) {
-    die("Error de conexión: " . $db->connect_error);
-}
-
-// 2. FUNCIONES DE SEGURIDAD
-function limpiarInput($data) {
-    return htmlspecialchars(stripslashes(trim($data)));
-}
-
-function redirigir($url) {
-    header("Location: $url");
-    exit();
-}
-
-// 3. AUTENTICACIÓN DE USUARIOS
-if (isset($_POST['accion'])) {
-    // Registro de nuevo usuario
-    if ($_POST['accion'] == 'registro') {
-        $usuario = limpiarInput($_POST['usuario']);
-        $contrasena = password_hash(limpiarInput($_POST['contrasena']), PASSWORD_BCRYPT);
-        
-        $stmt = $db->prepare("INSERT INTO usuarios (usuario, contrasena) VALUES (?, ?)");
-        $stmt->bind_param("ss", $usuario, $contrasena);
-        
-        if ($stmt->execute()) {
-            $_SESSION['mensaje'] = "Usuario registrado correctamente";
-            redirigir("login.php");
-        } else {
-            $_SESSION['error'] = "Error al registrar usuario";
-        }
-    }
-    
-    // Inicio de sesión
-    if ($_POST['accion'] == 'login') {
-        $usuario = limpiarInput($_POST['usuario']);
-        $contrasena = limpiarInput($_POST['contrasena']);
-        
-        $stmt = $db->prepare("SELECT id, contrasena FROM usuarios WHERE usuario = ?");
-        $stmt->bind_param("s", $usuario);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        
-        if ($result->num_rows == 1) {
-            $user = $result->fetch_assoc();
-            if (password_verify($contrasena, $user['contrasena'])) {
-                $_SESSION['usuario_id'] = $user['id'];
-                $_SESSION['usuario'] = $usuario;
-                redirigir("index.php");
-            }
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intranet - Representaciones de Audio</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
         }
         
-        $_SESSION['error'] = "Usuario o contraseña incorrectos";
-        redirigir("login.php");
-    }
-    
-    // Cerrar sesión
-    if ($_POST['accion'] == 'logout') {
-        session_destroy();
-        redirigir("login.php");
-    }
-}
-
-// 4. GESTIÓN DE DOCUMENTOS
-if (isset($_FILES['documento']) && isset($_SESSION['usuario_id'])) {
-    $targetDir = "uploads/";
-    if (!file_exists($targetDir)) {
-        mkdir($targetDir, 0755, true);
-    }
-    
-    // Crear .htaccess para proteger la carpeta
-    if (!file_exists($targetDir.".htaccess")) {
-        file_put_contents($targetDir.".htaccess", 
-            "Order Deny,Allow\nDeny from all\n<FilesMatch '\.(pdf|docx?|xlsx?|pptx?)$'>\nAllow from all\n</FilesMatch>");
-    }
-    
-    $fileName = basename($_FILES["documento"]["name"]);
-    $targetFile = $targetDir . $fileName;
-    $fileType = strtolower(pathinfo($targetFile, PATHINFO_EXTENSION));
-    
-    // Validar tipo de archivo
-    $allowedTypes = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'];
-    if (in_array($fileType, $allowedTypes)) {
-        if (move_uploaded_file($_FILES["documento"]["tmp_name"], $targetFile)) {
-            $stmt = $db->prepare("INSERT INTO documentos (nombre, ruta, usuario_id) VALUES (?, ?, ?)");
-            $stmt->bind_param("ssi", $fileName, $targetFile, $_SESSION['usuario_id']);
-            $stmt->execute();
-            $_SESSION['mensaje'] = "Documento subido correctamente";
-        } else {
-            $_SESSION['error'] = "Error al subir el documento";
+        header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 15px 0;
+            text-align: center;
         }
-    } else {
-        $_SESSION['error'] = "Tipo de archivo no permitido";
-    }
-    redirigir("documentos.php");
-}
-
-// 5. INTERFAZ DE USUARIO
-if (!isset($_GET['pagina']) || $_GET['pagina'] == 'login' || !isset($_SESSION['usuario_id'])) {
-    // Página de Login
-    ?>
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Intranet - Login</title>
-        <style>
-            body { font-family: Arial, sans-serif; background-color: #f4f4f9; }
-            .container { max-width: 400px; margin: 50px auto; padding: 20px; background: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-            input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; }
-            button { background: #5cb85c; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
-            .error { color: red; }
-            .mensaje { color: green; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h2>Iniciar Sesión</h2>
-            <?php if (isset($_SESSION['error'])): ?>
-                <p class="error"><?= $_SESSION['error']; unset($_SESSION['error']); ?></p>
-            <?php endif; ?>
-            <?php if (isset($_SESSION['mensaje'])): ?>
-                <p class="mensaje"><?= $_SESSION['mensaje']; unset($_SESSION['mensaje']); ?></p>
-            <?php endif; ?>
-            <form method="post">
-                <input type="hidden" name="accion" value="login">
-                <input type="text" name="usuario" placeholder="Usuario" required>
-                <input type="password" name="contrasena" placeholder="Contraseña" required>
-                <button type="submit">Ingresar</button>
-            </form>
-            <p>¿No tienes cuenta? <a href="registro.php">Regístrate</a></p>
+        
+        .logo-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+        }
+        
+        .logo {
+            height: 50px;
+        }
+        
+        .tab-container {
+            display: flex;
+            background-color: #34495e;
+        }
+        
+        .tab {
+            padding: 15px 20px;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .tab:hover {
+            background-color: #2c3e50;
+        }
+        
+        .tab.active {
+            background-color: #1abc9c;
+            font-weight: bold;
+        }
+        
+        .content {
+            padding: 20px;
+            display: none;
+        }
+        
+        .content.active {
+            display: block;
+        }
+        
+        /* Estilos específicos para la página de inicio */
+        .video-container {
+            width: 80%;
+            margin: 20px auto;
+            text-align: center;
+        }
+        
+        video {
+            max-width: 100%;
+            height: auto;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+        }
+        
+        /* Estilos para el sistema de gestión */
+        .file-manager {
+            display: flex;
+            margin-top: 20px;
+        }
+        
+        .folder-list {
+            width: 30%;
+            background-color: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.1);
+        }
+        
+        .file-list {
+            width: 70%;
+            margin-left: 20px;
+            background-color: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.1);
+        }
+        
+        .folder, .file {
+            padding: 8px;
+            margin: 5px 0;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        
+        .folder:hover, .file:hover {
+            background-color: #f0f0f0;
+        }
+        
+        .upload-area {
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #e8f4f8;
+            border: 2px dashed #1abc9c;
+            border-radius: 5px;
+            text-align: center;
+        }
+        
+        .footer-logo {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            height: 80px;
+            opacity: 0.8;
+        }
+        
+        /* Estilos para la página de videos */
+        .video-gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .video-item {
+            background-color: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo-container">
+            <h1>Intranet Representaciones de Audio</h1>
+            <img src="logo_Repre.png" alt="Logo Representaciones de Audio" class="logo">
         </div>
-    </body>
-    </html>
-    <?php
-    exit();
-}
-
-// 6. PÁGINAS PRINCIPALES
-$pagina = isset($_GET['pagina']) ? $_GET['pagina'] : 'inicio';
-
-switch ($pagina) {
-    case 'inicio':
-        ?>
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <title>Intranet - Inicio</title>
-            <style>
-                /* Estilos para la intranet */
-                body { font-family: Arial, sans-serif; margin: 0; }
-                header { background: #2c3e50; color: white; padding: 10px 20px; }
-                nav { background: #34495e; }
-                nav ul { list-style: none; padding: 0; margin: 0; display: flex; }
-                nav li a { color: white; padding: 15px 20px; display: block; text-decoration: none; }
-                nav li a:hover { background: #1abc9c; }
-                .contenido { padding: 20px; }
-                .tab-content { display: none; }
-                .tab-content.active { display: block; }
-                .documentos { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
-                .documento { background: white; padding: 15px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-            </style>
-        </head>
-        <body>
-            <header>
-                <h1>Intranet Corporativa</h1>
-                <form method="post" style="float: right;">
-                    <input type="hidden" name="accion" value="logout">
-                    <button type="submit">Cerrar Sesión</button>
-                </form>
-                <p>Bienvenido, <?= $_SESSION['usuario']; ?></p>
-            </header>
-            
-            <nav>
-                <ul>
-                    <li><a href="?pagina=inicio">Inicio</a></li>
-                    <li><a href="?pagina=calidad">Gestión de Calidad</a></li>
-                    <li><a href="?pagina=documentos">Documentos</a></li>
-                    <li><a href="?pagina=manuales">Manuales</a></li>
-                </ul>
-            </nav>
-            
-            <div class="contenido">
-                <div id="inicio" class="tab-content active">
-                    <h2>Bienvenido al Sistema de Intranet</h2>
-                    <p>Este es el portal interno de la empresa.</p>
-                </div>
-                
-                <div id="calidad" class="tab-content">
-                    <h2>Sistema de Gestión de Calidad</h2>
-                    <div class="documentos">
-                        <div class="documento">Documentos ISO 9001</div>
-                        <div class="documento">Procedimientos</div>
-                        <div class="documento">Registros</div>
-                        <div class="documento">Auditorías</div>
-                    </div>
-                </div>
-                
-                <div id="documentos" class="tab-content">
-                    <h2>Documentos</h2>
-                    <form method="post" enctype="multipart/form-data">
-                        <input type="file" name="documento" required>
-                        <button type="submit">Subir Documento</button>
-                    </form>
-                    
-                    <div class="documentos">
-                        <?php
-                        $result = $db->query("SELECT * FROM documentos WHERE usuario_id = {$_SESSION['usuario_id']}");
-                        while ($doc = $result->fetch_assoc()):
-                        ?>
-                            <div class="documento">
-                                <h3><?= $doc['nombre']; ?></h3>
-                                <a href="descargar.php?id=<?= $doc['id']; ?>">Descargar</a>
-                            </div>
-                        <?php endwhile; ?>
-                    </div>
-                </div>
-                
-                <div id="manuales" class="tab-content">
-                    <h2>Manuales</h2>
-                    <div class="documentos">
-                        <div class="documento">
-                            <h3>Manual de Usuario</h3>
-                            <a href="#">Descargar</a>
-                        </div>
-                        <div class="documento">
-                            <h3>Manual de Procedimientos</h3>
-                            <a href="#">Descargar</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <script>
-                // Cambio entre pestañas
-                document.querySelectorAll('nav a').forEach(link => {
-                    link.addEventListener('click', function(e) {
-                        e.preventDefault();
-                        document.querySelectorAll('.tab-content').forEach(tab => {
-                            tab.classList.remove('active');
-                        });
-                        document.getElementById(this.getAttribute('href').split('=')[1]).classList.add('active');
-                        history.pushState(null, null, this.getAttribute('href'));
-                    });
-                });
-            </script>
-        </body>
-        </html>
-        <?php
-        break;
+    </header>
+    
+    <div class="tab-container">
+        <div class="tab active" onclick="openTab('inicio')">Inicio</div>
+        <div class="tab" onclick="openTab('gestion')">Sistema de Gestión y Calidad</div>
+        <div class="tab" onclick="openTab('videos')">Videos</div>
+    </div>
+    
+    <div id="inicio" class="content active">
+        <h2>Bienvenido a la Intranet</h2>
+        <p>Esta es la página principal de la intranet de Representaciones de Audio.</p>
         
-    case 'registro':
-        ?>
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <title>Registro de Usuario</title>
-            <style>
-                body { font-family: Arial, sans-serif; background-color: #f4f4f9; }
-                .container { max-width: 400px; margin: 50px auto; padding: 20px; background: #fff; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-                input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; }
-                button { background: #5cb85c; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>Registro de Usuario</h2>
-                <form method="post">
-                    <input type="hidden" name="accion" value="registro">
-                    <input type="text" name="usuario" placeholder="Usuario" required>
-                    <input type="password" name="contrasena" placeholder="Contraseña" required>
-                    <button type="submit">Registrarse</button>
-                </form>
-                <p>¿Ya tienes cuenta? <a href="login.php">Inicia sesión</a></p>
+        <div class="video-container">
+            <h3>Video Corporativo</h3>
+            <video controls>
+                <source src="https://equiposycintas-my.sharepoint.com/:v:/g/personal/aflores_repdeaudio_com_mx/ERw4RWXxZQdFsquI08F3vtABlQbR5_dqY-FYiWoCix2zzg?e=NcBOJj" type="video/mp4">
+                Tu navegador no soporta el elemento de video.
+            </video>
+        </div>
+    </div>
+    
+    <div id="gestion" class="content">
+        <h2>Sistema de Gestión y Calidad</h2>
+        <p>Administra los documentos y archivos del sistema de gestión de calidad.</p>
+        
+        <div class="file-manager">
+            <div class="folder-list">
+                <h3>Carpetas</h3>
+                <div class="folder" onclick="openFolder('procedimientos')">Procedimientos</div>
+                <div class="folder" onclick="openFolder('manuales')">Manuales</div>
+                <div class="folder" onclick="openFolder('formatos')">Formatos</div>
+                <div class="folder" onclick="openFolder('registros')">Registros</div>
+                
+                <div class="upload-area">
+                    <h4>Crear nueva carpeta</h4>
+                    <input type="text" id="new-folder-name" placeholder="Nombre de la carpeta">
+                    <button onclick="createFolder()">Crear</button>
+                </div>
             </div>
-        </body>
-        </html>
-        <?php
-        break;
-}
-
-// 7. ARCHIVO PARA DESCARGAR DOCUMENTOS
-if (isset($_GET['id']) && $_GET['id'] == 'descargar') {
-    $id = intval($_GET['id']);
-    $stmt = $db->prepare("SELECT nombre, ruta FROM documentos WHERE id = ? AND usuario_id = ?");
-    $stmt->bind_param("ii", $id, $_SESSION['usuario_id']);
-    $stmt->execute();
-    $result = $stmt->get_result();
+            
+            <div class="file-list">
+                <h3 id="current-folder">Archivos</h3>
+                <div id="file-list-content">
+                    <p>Seleccione una carpeta para ver sus archivos</p>
+                </div>
+                
+                <div class="upload-area">
+                    <h4>Subir archivos</h4>
+                    <input type="file" id="file-upload" multiple>
+                    <button onclick="uploadFiles()">Subir</button>
+                </div>
+            </div>
+        </div>
+    </div>
     
-    if ($result->num_rows == 1) {
-        $doc = $result->fetch_assoc();
-        if (file_exists($doc['ruta'])) {
-            header('Content-Description: File Transfer');
-            header('Content-Type: application/octet-stream');
-            header('Content-Disposition: attachment; filename="'.basename($doc['ruta']).'"');
-            header('Expires: 0');
-            header('Cache-Control: must-revalidate');
-            header('Pragma: public');
-            header('Content-Length: ' . filesize($doc['ruta']));
-            readfile($doc['ruta']);
-            exit;
+    <div id="videos" class="content">
+        <h2>Videos</h2>
+        <p>Colección de videos corporativos y tutoriales.</p>
+        
+        <div class="video-gallery">
+            <div class="video-item">
+                <h3>Video Corporativo</h3>
+                <video controls width="100%">
+                    <source src="https://equiposycintas-my.sharepoint.com/:v:/g/personal/aflores_repdeaudio_com_mx/ERw4RWXxZQdFsquI08F3vtABlQbR5_dqY-FYiWoCix2zzg?e=NcBOJj" type="video/mp4">
+                </video>
+            </div>
+            <div class="video-item">
+                <h3>Tutorial Sistema de Gestión</h3>
+                <video controls width="100%">
+                    <source src="videos/tutorial.mp4" type="video/mp4">
+                </video>
+            </div>
+            <div class="video-item">
+                <h3>Entrenamiento Calidad</h3>
+                <video controls width="100%">
+                    <source src="videos/entrenamiento.mp4" type="video/mp4">
+                </video>
+            </div>
+        </div>
+    </div>
+    
+    <img src="logo_Repre.png" alt="Logo Representaciones de Audio" class="footer-logo">
+    
+    <script>
+        function openTab(tabName) {
+            // Ocultar todos los contenidos
+            const contents = document.getElementsByClassName('content');
+            for (let i = 0; i < contents.length; i++) {
+                contents[i].classList.remove('active');
+            }
+            
+            // Desactivar todas las pestañas
+            const tabs = document.getElementsByClassName('tab');
+            for (let i = 0; i < tabs.length; i++) {
+                tabs[i].classList.remove('active');
+            }
+            
+            // Mostrar el contenido seleccionado y activar la pestaña
+            document.getElementById(tabName).classList.add('active');
+            event.currentTarget.classList.add('active');
         }
-    }
-    
-    $_SESSION['error'] = "Documento no encontrado o no tienes permiso";
-    redirigir("documentos.php");
-}
-
-// 8. CREACIÓN DE TABLAS SI NO EXISTEN (solo ejecutar una vez)
-$db->query("CREATE TABLE IF NOT EXISTS usuarios (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    usuario VARCHAR(50) NOT NULL UNIQUE,
-    contrasena VARCHAR(255) NOT NULL,
-    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)");
-
-$db->query("CREATE TABLE IF NOT EXISTS documentos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    nombre VARCHAR(100) NOT NULL,
-    ruta VARCHAR(255) NOT NULL,
-    usuario_id INT NOT NULL,
-    fecha_subida TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
-)");
-?>
+        
+        // Funciones para el sistema de gestión de archivos
+        function openFolder(folderName) {
+            const folderNames = {
+                'procedimientos': 'Procedimientos',
+                'manuales': 'Manuales',
+                'formatos': 'Formatos',
+                'registros': 'Registros'
+            };
+            
+            document.getElementById('current-folder').textContent = `Archivos - ${folderNames[folderName]}`;
+            
+            // Simular carga de archivos (en un sistema real harías una llamada AJAX)
+            const fileList = document.getElementById('file-list-content');
+            fileList.innerHTML = `
+                <div class="file">Documento_${folderName}_001.pdf</div>
+                <div class="file">Formulario_${folderName}_2023.docx</div>
+                <div class="file">Registro_${folderName}_enero.xlsx</div>
+            `;
+        }
+        
+        function createFolder() {
+            const folderName = document.getElementById('new-folder-name').value;
+            if (folderName.trim() === '') {
+                alert('Por favor ingrese un nombre para la carpeta');
+                return;
+            }
+            
+            const folderList = document.querySelector('.folder-list');
+            const newFolder = document.createElement('div');
+            newFolder.className = 'folder';
+            newFolder.textContent = folderName;
+            newFolder.onclick = function() { openFolder(folderName.toLowerCase().replace(/ /g, '-')); };
+            
+            folderList.insertBefore(newFolder, document.querySelector('.upload-area'));
+            document.getElementById('new-folder-name').value = '';
+            
+            alert(`Carpeta "${folderName}" creada exitosamente`);
+        }
+        
+        function uploadFiles() {
+            const fileInput = document.getElementById('file-upload');
+            if (fileInput.files.length === 0) {
+                alert('Por favor seleccione al menos un archivo');
+                return;
+            }
+            
+            // Simular subida de archivos (en un sistema real usarías FormData y AJAX)
+            let fileNames = '';
+            for (let i = 0; i < fileInput.files.length; i++) {
+                fileNames += `<div class="file">${fileInput.files[i].name}</div>`;
+            }
+            
+            const fileList = document.getElementById('file-list-content');
+            fileList.innerHTML += fileNames;
+            
+            alert('Archivos subidos exitosamente');
+            fileInput.value = '';
+        }
+    </script>
+</body>
+</html>
